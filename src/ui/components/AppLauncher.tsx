@@ -15,11 +15,12 @@ interface AppLauncherProps {
 
 export const AppLauncher: React.FC<AppLauncherProps> = ({ apps, onSelect }) => {
   const items = apps.map(app => ({
+    key: app.id, // Add unique key
     label: `${app.name} - ${app.description}`,
     value: app
   }));
 
-  const handleSelect = (item: { label: string; value: App }) => {
+  const handleSelect = (item: { key: string; label: string; value: App }) => {
     onSelect(item.value);
   };
 

@@ -12,6 +12,7 @@ import { JsonStorage } from './adapters/json-storage.js';
 import { KeyboardInput } from './adapters/keyboard-input.js';
 import { App } from './ui/App.js';
 import calendarApp from './apps/calendar/CalendarManager.js';
+import agentChatApp from './apps/agent-chat/AgentChat.js';
 
 const program = new Command();
 
@@ -40,6 +41,7 @@ program
 
     // Register built-in apps
     framework.getRegistry().register(calendarApp);
+    framework.getRegistry().register(agentChatApp);
 
     // Render the UI
     const { unmount, waitUntilExit } = render(
@@ -70,6 +72,7 @@ program
 
     await framework.initialize();
     framework.getRegistry().register(calendarApp);
+    framework.getRegistry().register(agentChatApp);
 
     try {
       await framework.executeCommand(appId, commandName, args);
