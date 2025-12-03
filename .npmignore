@@ -1,0 +1,12 @@
+src/
+tsconfig.json
+vitest.config.ts
+eslint.config.js
+.git/
+.github/
+*.test.ts
+*.test.tsx
+coverage/
+node_modules/
+.env
+.env.local
