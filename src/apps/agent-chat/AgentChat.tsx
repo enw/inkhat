@@ -6,7 +6,7 @@
  * and shared entity memory across all threads.
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import type { App, AppContext, AppCommand } from '@ports/app.js';
@@ -113,7 +113,7 @@ export class AgentChatApp implements App {
 
         // Load or create default thread
         if (this.threads.length === 0) {
-          await this.createThread('Main Thread');
+          await this.createThread('E10D Agent');
         }
         await this.switchThread(this.threads[0].id);
       },
@@ -145,7 +145,7 @@ export class AgentChatApp implements App {
     await this.loadEntityMemory();
 
     if (this.threads.length === 0) {
-      await this.createThread('Main Thread');
+      await this.createThread('E10D Agent');
     }
     await this.switchThread(this.threads[0].id);
   }
@@ -218,7 +218,7 @@ export class AgentChatApp implements App {
       if (this.threads.length > 0) {
         await this.switchThread(this.threads[0].id);
       } else {
-        const newThreadId = await this.createThread('Main Thread');
+        const newThreadId = await this.createThread('E10D Agent');
         await this.switchThread(newThreadId);
       }
     }
@@ -525,7 +525,7 @@ interface ScrollableChatViewProps {
   messages: ChatMessage[];
 }
 
-function ScrollableChatView({ messages }: ScrollableChatViewProps) {
+const ScrollableChatView = memo(function ScrollableChatView({ messages }: ScrollableChatViewProps) {
   const [scrollOffset, setScrollOffset] = useState(0);
   const autoScrollRef = useRef(true);
   const prevMessageCountRef = useRef(messages.length);
@@ -611,7 +611,154 @@ function ScrollableChatView({ messages }: ScrollableChatViewProps) {
       )}
     </Box>
   );
+});
+
+interface CommandDefinition {
+  key: string;
+  label: string;
+  description: string;
+  command: string;
 }
+
+const AVAILABLE_COMMANDS: CommandDefinition[] = [
+  { key: 'help', label: '/help', description: 'Show help', command: 'help' },
+  { key: 'clear', label: '/clear', description: 'Clear current thread messages', command: 'clear' },
+  { key: 'new', label: '/new', description: 'Create a new thread', command: 'new' },
+  { key: 'thread', label: '/thread', description: 'Show thread list or switch thread', command: 'thread' },
+  { key: 'chat', label: '/chat', description: 'Return to chat', command: 'chat' },
+];
+
+// Memoized Memory Pane component - only re-renders when its props change
+interface MemoryPaneProps {
+  summary: ConversationSummary | null;
+  entityMemory: EntityMemory;
+  recentMessages: ChatMessage[];
+  messages: ChatMessage[];
+}
+
+const MemoryPane = memo(function MemoryPane({ summary, entityMemory, recentMessages, messages }: MemoryPaneProps) {
+  return (
+    <Box flexDirection="column" width="40%" borderStyle="single" borderColor="magenta" padding={1} marginLeft={1}>
+      <Box borderStyle="round" borderColor="magenta" padding={1} flexDirection="column">
+        <Text bold color="magenta">
+          Memory 🧠
+        </Text>
+        <Text dimColor>Thread Memory & Shared Entity Memory</Text>
+      </Box>
+
+      <Box flexDirection="column" marginTop={1} flexGrow={1}>
+        {/* Recent Messages Section */}
+        <Box flexDirection="column" marginBottom={2}>
+          <Text bold color="cyan" underline>
+            Recent Messages ({Math.min(5, recentMessages.length)})
+          </Text>
+          <Box flexDirection="column" marginTop={1}>
+            {recentMessages.slice(-5).map((msg, i) => (
+              <Box key={i} flexDirection="column" marginBottom={1}>
+                <Text dimColor>
+                  {msg.role === 'user' ? '👤' : '🤖'} {msg.content.slice(0, 50)}
+                  {msg.content.length > 50 ? '...' : ''}
+                </Text>
+              </Box>
+            ))}
+          </Box>
+        </Box>
+
+        {/* Conversation Summary Section (Thread-specific) */}
+        <Box flexDirection="column" marginBottom={2}>
+          <Text bold color="yellow" underline>
+            Thread Summary
+          </Text>
+          {summary ? (
+            <Box flexDirection="column" marginTop={1}>
+              <Text dimColor>{summary.summary}</Text>
+              <Box marginTop={1}>
+                <Text dimColor>
+                  (Updated: {messages.length - summary.messageCount} messages ago)
+                </Text>
+              </Box>
+            </Box>
+          ) : (
+            <Box marginTop={1}>
+              <Text dimColor>No summary yet. Chat more to generate one.</Text>
+            </Box>
+          )}
+        </Box>
+
+        {/* Entity Memory Section (Shared) */}
+        <Box flexDirection="column">
+          <Text bold color="green" underline>
+            Entity Memory ({entityMemory.nodes.length} entities, shared)
+          </Text>
+          {entityMemory.nodes.length > 0 ? (
+            <Box flexDirection="column" marginTop={1}>
+              {entityMemory.nodes.slice(0, 10).map((node) => (
+                <Box key={node.id} flexDirection="column" marginBottom={1}>
+                  <Text bold>
+                    {node.type === 'person' ? '👤' : 
+                     node.type === 'place' ? '📍' : 
+                     node.type === 'event' ? '📅' : 
+                     node.type === 'task' ? '✓' : 
+                     node.type === 'concept' ? '💡' : '🔷'} {node.name}
+                  </Text>
+                  <Text dimColor>
+                    {node.description.slice(0, 80)}
+                    {node.description.length > 80 ? '...' : ''}
+                  </Text>
+                  {node.relationships.length > 0 && (
+                    <Text dimColor>
+                      → {node.relationships.length} relationship{node.relationships.length > 1 ? 's' : ''}
+                    </Text>
+                  )}
+                </Box>
+              ))}
+              {entityMemory.nodes.length > 10 && (
+                <Text dimColor>... and {entityMemory.nodes.length - 10} more</Text>
+              )}
+            </Box>
+          ) : (
+            <Box marginTop={1}>
+              <Text dimColor>No entities yet. Chat more to extract entities.</Text>
+            </Box>
+          )}
+        </Box>
+      </Box>
+    </Box>
+  );
+});
+
+// Memoized Command Selector component
+interface CommandSelectorProps {
+  filteredCommands: CommandDefinition[];
+  selectedCommandIndex: number;
+}
+
+const CommandSelector = memo(function CommandSelector({ filteredCommands, selectedCommandIndex }: CommandSelectorProps) {
+  return (
+    <Box 
+      marginBottom={1} 
+      borderStyle="single" 
+      borderColor="cyan" 
+      padding={1}
+      flexDirection="column"
+    >
+      <Text bold color="cyan" dimColor>
+        Commands (↑↓ to navigate, Enter to select):
+      </Text>
+      {filteredCommands.map((cmd, index) => (
+        <Box key={cmd.key} flexDirection="row" marginTop={index === 0 ? 0 : 1}>
+          <Text color={index === selectedCommandIndex ? 'green' : 'white'} bold={index === selectedCommandIndex}>
+            {index === selectedCommandIndex ? '→ ' : '  '}
+          </Text>
+          <Text color={index === selectedCommandIndex ? 'green' : 'white'} bold={index === selectedCommandIndex}>
+            {cmd.label}
+          </Text>
+          <Text dimColor> - {cmd.description}</Text>
+        </Box>
+      ))}
+    </Box>
+  );
+});
 
 function ChatUI({ app }: ChatUIProps) {
   const [input, setInput] = useState('');
@@ -623,10 +770,32 @@ function ChatUI({ app }: ChatUIProps) {
   const [entityMemory, setEntityMemory] = useState(app.getEntityMemory());
   const [threads, setThreads] = useState(app.getThreads());
   const [currentThread, setCurrentThread] = useState(app.getCurrentThread());
+  const [showCommandSelector, setShowCommandSelector] = useState(false);
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
 
   const prevMessageCountRef = useRef(messages.length);
   const prevSummaryRef = useRef(summary);
   const prevEntityCountRef = useRef(entityMemory.nodes.length);
+  
+  // Filter commands based on input after '/'
+  const filteredCommands = useMemo(() => {
+    if (!input.startsWith('/')) return [];
+    const query = input.slice(1).toLowerCase().trim();
+    if (query === '') return AVAILABLE_COMMANDS;
+    return AVAILABLE_COMMANDS.filter(cmd => 
+      cmd.key.toLowerCase().includes(query) || 
+      cmd.description.toLowerCase().includes(query)
+    );
+  }, [input]);
+  
+  // Show command selector when input starts with '/' and reset selection
+  useEffect(() => {
+    const shouldShow = input.startsWith('/') && filteredCommands.length > 0;
+    setShowCommandSelector(shouldShow);
+    if (shouldShow) {
+      setSelectedCommandIndex(0);
+    }
+  }, [input, filteredCommands.length]);
   
   useEffect(() => {
     const currentMessages = app.getMessages();
@@ -651,70 +820,100 @@ function ChatUI({ app }: ChatUIProps) {
     setCurrentThread(currentThreadObj);
   }, [app]);
 
-  const handleSubmit = async (value: string) => {
-    if (!value.trim()) return;
+  // Handle command execution
+  const executeCommand = async (cmd: string, args: string[] = []) => {
+    if (cmd === 'help') {
+      setView('help');
+      setInput('');
+      return;
+    }
 
-    // Handle slash commands
-    if (value.startsWith('/')) {
-      const [cmd, ...args] = value.slice(1).split(' ');
+    if (cmd === 'clear') {
+      await app.clearCurrentThread();
+      setMessages([]);
+      setSummary(null);
+      setInput('');
+      return;
+    }
+
+    if (cmd === 'new') {
+      const threadName = args.join(' ') || `Thread ${threads.length + 1}`;
+      const newThreadId = await app.createThread(threadName);
+      await app.switchThread(newThreadId);
+      setMessages(app.getMessages());
+      setSummary(app.getConversationSummary());
+      setView('chat');
+      setInput('');
+      return;
+    }
+
+    if (cmd === 'thread') {
+      if (args.length === 0) {
+        setView('threads');
+        setInput('');
+        return;
+      }
       
-      if (cmd === 'help') {
-        setView('help');
-        setInput('');
-        return;
-      }
-
-      if (cmd === 'clear') {
-        await app.clearCurrentThread();
-        setMessages([]);
-        setSummary(null);
-        setInput('');
-        return;
-      }
-
-      if (cmd === 'new') {
-        const threadName = args.join(' ') || `Thread ${threads.length + 1}`;
-        const newThreadId = await app.createThread(threadName);
-        await app.switchThread(newThreadId);
+      const threadIdOrName = args.join(' ');
+      const thread = threads.find(t => 
+        t.id === threadIdOrName || t.name.toLowerCase() === threadIdOrName.toLowerCase()
+      );
+      
+      if (thread) {
+        await app.switchThread(thread.id);
         setMessages(app.getMessages());
         setSummary(app.getConversationSummary());
         setView('chat');
         setInput('');
         return;
       }
-
-      if (cmd === 'thread') {
-        if (args.length === 0) {
-          setView('threads');
-          setInput('');
-          return;
-        }
-        
-        const threadIdOrName = args.join(' ');
-        const thread = threads.find(t => 
-          t.id === threadIdOrName || t.name.toLowerCase() === threadIdOrName.toLowerCase()
-        );
-        
-        if (thread) {
-          await app.switchThread(thread.id);
-          setMessages(app.getMessages());
-          setSummary(app.getConversationSummary());
-          setView('chat');
-          setInput('');
-          return;
-        }
-        
-        setInput('');
-        return;
-      }
-
-      if (cmd === 'chat') {
-        setView('chat');
-        setInput('');
-        return;
-      }
-
+      
       setInput('');
+      return;
+    }
+
+    if (cmd === 'chat') {
+      setView('chat');
+      setInput('');
+      return;
+    }
+
+    setInput('');
+  };
+
+  // Handle arrow key navigation when command selector is visible
+  useInput((_inputStr, key) => {
+    if (!showCommandSelector || filteredCommands.length === 0) return;
+    
+    if (key.upArrow) {
+      setSelectedCommandIndex(prev => 
+        prev > 0 ? prev - 1 : filteredCommands.length - 1
+      );
+    } else if (key.downArrow) {
+      setSelectedCommandIndex(prev => 
+        prev < filteredCommands.length - 1 ? prev + 1 : 0
+      );
+    } else if (key.return && filteredCommands[selectedCommandIndex]) {
+      // Fill in the command name when Enter is pressed
+      const selectedCmd = filteredCommands[selectedCommandIndex];
+      setInput(selectedCmd.label + ' ');
+      setShowCommandSelector(false);
+      return; // Prevent default Enter behavior
+    }
+  }, { isActive: showCommandSelector });
+
+  const handleSubmit = async (value: string) => {
+    if (!value.trim()) return;
+    
+    // If command selector is visible and Enter was pressed, don't submit yet
+    if (showCommandSelector && filteredCommands.length > 0) {
+      return;
+    }
+
+    // Handle slash commands
+    if (value.startsWith('/')) {
+      const [cmd, ...args] = value.slice(1).split(' ');
+      await executeCommand(cmd, args);
       return;
     }
 
@@ -769,8 +968,8 @@ function ChatUI({ app }: ChatUIProps) {
   }
 
   if (view === 'threads') {
-    return (
-      <Box flexDirection="column" padding={1}>
+  return (
+    <Box flexDirection="column" padding={1}>
         <Text bold color="cyan">
           Threads ({threads.length})
         </Text>
@@ -795,7 +994,10 @@ function ChatUI({ app }: ChatUIProps) {
   }
 
   const config = app.getMemoryConfig();
-  const recentMessages = app.getRecentMessages(config.recentMessagesCount);
+  // Memoize recentMessages so MemoryPane doesn't re-render on every keystroke
+  const recentMessages = useMemo(() => {
+    return app.getRecentMessages(config.recentMessagesCount);
+  }, [messages.length, config.recentMessagesCount]);
 
   return (
     <Box flexDirection="row" width="100%" height="100%">
@@ -807,9 +1009,9 @@ function ChatUI({ app }: ChatUIProps) {
           </Text>
           <Text dimColor>
             {currentThread ? `Thread: ${currentThread.name}` : 'No thread'} • 
-            Type /help for commands • Arrow keys to scroll
-          </Text>
-        </Box>
+            Type / to see commands • Arrow keys to scroll
+              </Text>
+            </Box>
 
         <Box 
           flexDirection="column" 
@@ -819,13 +1021,13 @@ function ChatUI({ app }: ChatUIProps) {
           minHeight={0}
         >
           <ScrollableChatView messages={messages} />
-        </Box>
+      </Box>
 
-        {isLoading && (
-          <Box marginTop={1}>
-            <Text color="yellow">Agent is thinking...</Text>
-          </Box>
-        )}
+      {isLoading && (
+        <Box marginTop={1}>
+          <Text color="yellow">Agent is thinking...</Text>
+        </Box>
+      )}
 
         {isUpdatingMemory && (
           <Box marginTop={1}>
@@ -833,110 +1035,38 @@ function ChatUI({ app }: ChatUIProps) {
           </Box>
         )}
 
-        <Box marginTop={1} borderStyle="single" borderColor="gray" padding={1}>
-          <Text bold>&gt; </Text>
-          <TextInput
-            value={input}
-            onChange={setInput}
-            onSubmit={handleSubmit}
-            placeholder="Type your message..."
+        {/* Command selector */}
+        {showCommandSelector && filteredCommands.length > 0 && (
+          <CommandSelector 
+            filteredCommands={filteredCommands}
+            selectedCommandIndex={selectedCommandIndex}
           />
-        </Box>
+        )}
 
-        <Box marginTop={1}>
-          <Text dimColor>
-            {messages.length > 0 ? `${messages.length} messages` : 'Ready to chat'}
-          </Text>
+      <Box marginTop={1} borderStyle="single" borderColor="gray" padding={1}>
+        <Text bold>&gt; </Text>
+        <TextInput
+          value={input}
+          onChange={setInput}
+          onSubmit={handleSubmit}
+          placeholder="Type your message..."
+        />
+      </Box>
+
+      <Box marginTop={1}>
+        <Text dimColor>
+          {messages.length > 0 ? `${messages.length} messages` : 'Ready to chat'}
+        </Text>
         </Box>
       </Box>
 
-      {/* Right Pane: Memory */}
-      <Box flexDirection="column" width="40%" borderStyle="single" borderColor="magenta" padding={1} marginLeft={1}>
-        <Box borderStyle="round" borderColor="magenta" padding={1} flexDirection="column">
-          <Text bold color="magenta">
-            Memory 🧠
-          </Text>
-          <Text dimColor>Thread Memory & Shared Entity Memory</Text>
-        </Box>
-
-        <Box flexDirection="column" marginTop={1} flexGrow={1}>
-          {/* Recent Messages Section */}
-          <Box flexDirection="column" marginBottom={2}>
-            <Text bold color="cyan" underline>
-              Recent Messages ({Math.min(5, recentMessages.length)})
-            </Text>
-            <Box flexDirection="column" marginTop={1}>
-              {recentMessages.slice(-5).map((msg, i) => (
-                <Box key={i} flexDirection="column" marginBottom={1}>
-                  <Text dimColor>
-                    {msg.role === 'user' ? '👤' : '🤖'} {msg.content.slice(0, 50)}
-                    {msg.content.length > 50 ? '...' : ''}
-                  </Text>
-                </Box>
-              ))}
-            </Box>
-          </Box>
-
-          {/* Conversation Summary Section (Thread-specific) */}
-          <Box flexDirection="column" marginBottom={2}>
-            <Text bold color="yellow" underline>
-              Thread Summary
-            </Text>
-            {summary ? (
-              <Box flexDirection="column" marginTop={1}>
-                <Text dimColor>{summary.summary}</Text>
-                <Box marginTop={1}>
-                  <Text dimColor>
-                    (Updated: {messages.length - summary.messageCount} messages ago)
-                  </Text>
-                </Box>
-              </Box>
-            ) : (
-              <Box marginTop={1}>
-                <Text dimColor>No summary yet. Chat more to generate one.</Text>
-              </Box>
-            )}
-          </Box>
-
-          {/* Entity Memory Section (Shared) */}
-          <Box flexDirection="column">
-            <Text bold color="green" underline>
-              Entity Memory ({entityMemory.nodes.length} entities, shared)
-            </Text>
-            {entityMemory.nodes.length > 0 ? (
-              <Box flexDirection="column" marginTop={1}>
-                {entityMemory.nodes.slice(0, 10).map((node) => (
-                  <Box key={node.id} flexDirection="column" marginBottom={1}>
-                    <Text bold>
-                      {node.type === 'person' ? '👤' : 
-                       node.type === 'place' ? '📍' : 
-                       node.type === 'event' ? '📅' : 
-                       node.type === 'task' ? '✓' : 
-                       node.type === 'concept' ? '💡' : '🔷'} {node.name}
-                    </Text>
-                    <Text dimColor>
-                      {node.description.slice(0, 80)}
-                      {node.description.length > 80 ? '...' : ''}
-                    </Text>
-                    {node.relationships.length > 0 && (
-                      <Text dimColor>
-                        → {node.relationships.length} relationship{node.relationships.length > 1 ? 's' : ''}
-                      </Text>
-                    )}
-                  </Box>
-                ))}
-                {entityMemory.nodes.length > 10 && (
-                  <Text dimColor>... and {entityMemory.nodes.length - 10} more</Text>
-                )}
-              </Box>
-            ) : (
-              <Box marginTop={1}>
-                <Text dimColor>No entities yet. Chat more to extract entities.</Text>
-              </Box>
-            )}
-          </Box>
-        </Box>
-      </Box>
+      {/* Right Pane: Memory - Memoized to prevent re-renders */}
+      <MemoryPane 
+        summary={summary}
+        entityMemory={entityMemory}
+        recentMessages={recentMessages}
+        messages={messages}
+      />
     </Box>
   );
 }
