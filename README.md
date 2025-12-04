@@ -13,6 +13,7 @@ A framework for building personal productivity TUI (Terminal User Interface) app
 ## Example Apps
 
 - **Calendar Manager Agent**: Summarize agenda, find meeting slots, manage appointments
+- **Agent Chat**: LLM-powered conversational agent with intelligent memory management
 
 ## Installation
 

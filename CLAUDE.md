@@ -126,13 +126,16 @@ npm run dev -- exec calendar-manager add "Meeting" "2024-01-15 14:00"
 
 ### 2. Agent Chat (`src/apps/agent-chat/`) **NEW**
 
-**Demo of LLM-powered conversational agent.**
+**Demo of LLM-powered conversational agent with intelligent memory management.**
 
 **Features:**
 - Chat with local LLMs via Ollama
 - Persistent conversation history
-- Streaming responses
-- Multi-turn conversations
+- **Split UI**: Chat pane (left) and Memory pane (right)
+- **Conversation Summarization**: Automatic summary generation every M messages
+- **Entity Memory**: Structured knowledge graph of entities (people, places, concepts, events, tasks)
+- **Memory Persistence**: All memory is saved and restored across sessions
+- Multi-turn conversations with context awareness
 
 **Usage:**
 ```bash
@@ -152,8 +155,68 @@ npm run dev -- exec agent-chat clear
 
 **Commands:**
 - `/help` - Show help
-- `/clear` - Clear history
+- `/clear` - Clear history and memory
 - `/chat` - Return to chat
+
+**Memory Management:**
+
+The Agent Chat app features a sophisticated two-pane interface:
+
+**Left Pane - Chat Interface:**
+- Shows the last N messages (configurable, default: 10)
+- Real-time chat with the LLM
+- Uses conversation summary + recent messages for context
+
+**Right Pane - Memory Dashboard:**
+- **Recent Messages**: Last 5 messages preview
+- **Conversation Summary**: Narrative summary of the entire conversation, updated every M messages (configurable, default: 5)
+- **Entity Memory**: Structured knowledge graph showing:
+  - People mentioned (👤)
+  - Places mentioned (📍)
+  - Events discussed (📅)
+  - Tasks mentioned (✓)
+  - Concepts discussed (💡)
+  - Other entities (🔷)
+  - Relationships between entities with strength indicators
+
+**Memory Configuration:**
+- `recentMessagesCount` (N): Number of recent messages to show in chat (default: 10)
+- `summaryUpdateFrequency` (M): Update summary every M messages (default: 5)
+
+**Memory Persistence:**
+- Conversation history: `agent-chat/history`
+- Conversation summary: `agent-chat/conversation-summary`
+- Entity memory: `agent-chat/entity-memory`
+
+All memory is automatically saved and loaded when the app starts/stops.
+
+**How Memory Works:**
+
+1. **Conversation Memory**: The system maintains a narrative summary that captures:
+   - Conversation flow
+   - Key topics discussed
+   - Important context
+   - This is distinct from entity memory (separate output from the LLM)
+
+2. **Entity Memory**: The system extracts and structures:
+   - Entity nodes (with type, name, description, properties)
+   - Relationships between entities
+   - Relationship strength (0-1 scale)
+   - Updated incrementally as conversations progress
+
+3. **Automatic Updates**: Every M messages, the system:
+   - Takes the previous summary and latest M messages
+   - Sends to LLM with a specialized prompt that distinguishes conversation memory from entity memory
+   - Updates both the narrative summary and the entity graph
+   - Saves to persistent storage
+
+**Memory Prompt Design:**
+
+The summarization prompt explicitly separates two types of memory:
+- **CONVERSATION MEMORY**: Narrative, flow-based summary
+- **ENTITY MEMORY**: Structured, graph-based knowledge
+
+This distinction allows the system to maintain both a coherent narrative understanding and a structured knowledge base.
 
 ## LLM Provider System
 
