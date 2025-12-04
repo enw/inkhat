@@ -9,9 +9,9 @@
 import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { App, AppContext, AppCommand } from '@ports/app.js';
-import type { LLMPort, Message } from '@ports/llm.js';
+import type { LLMPort, Message, ToolDefinition, ToolCall } from '@ports/llm.js';
 import { OllamaAdapter } from '@adapters/llm/ollama.js';
-import { EnhancedTextInput } from './EnhancedTextInput.js';
+import TextInput from 'ink-text-input';
 import { SplitMemoryPanes } from './SplitMemoryPanes.js';
 
 interface ChatMessage {
@@ -295,6 +295,222 @@ export class AgentChatApp implements App {
   }
 
   /**
+   * Get entity management tool definitions for LLM
+   */
+  private getEntityTools(): ToolDefinition[] {
+    return [
+      {
+        name: 'create_entity',
+        description: 'Create a new entity in the knowledge graph. Use this when you encounter a new person, place, concept, event, or task.',
+        parameters: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Unique identifier for the entity (e.g., "person-alice", "concept-machine-learning")' },
+            type: { type: 'string', enum: ['person', 'place', 'concept', 'event', 'task', 'other'], description: 'Type of entity' },
+            name: { type: 'string', description: 'Display name of the entity' },
+            description: { type: 'string', description: 'Description of what we know about this entity' },
+            properties: { type: 'object', description: 'Additional key-value properties about the entity' },
+          },
+          required: ['id', 'type', 'name', 'description'],
+        },
+      },
+      {
+        name: 'update_entity',
+        description: 'Update an existing entity with new information. Use this to modify entity details or add new properties.',
+        parameters: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'ID of the entity to update' },
+            name: { type: 'string', description: 'Updated name (optional)' },
+            description: { type: 'string', description: 'Updated description (optional)' },
+            properties: { type: 'object', description: 'Updated properties to merge with existing ones (optional)' },
+          },
+          required: ['id'],
+        },
+      },
+      {
+        name: 'delete_entity',
+        description: 'Delete an entity from the knowledge graph. Use this when an entity is no longer relevant.',
+        parameters: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'ID of the entity to delete' },
+          },
+          required: ['id'],
+        },
+      },
+      {
+        name: 'add_relationship',
+        description: 'Add or update a relationship between two entities. Use this to connect entities (e.g., "Alice works at Google", "Python is a programming language").',
+        parameters: {
+          type: 'object',
+          properties: {
+            sourceId: { type: 'string', description: 'ID of the source entity' },
+            targetId: { type: 'string', description: 'ID of the target entity' },
+            relationship: { type: 'string', description: 'Type of relationship (e.g., "works_at", "is_a", "created", "located_in")' },
+            strength: { type: 'number', description: 'Strength of relationship (0-1), default 0.5' },
+          },
+          required: ['sourceId', 'targetId', 'relationship'],
+        },
+      },
+      {
+        name: 'remove_relationship',
+        description: 'Remove a relationship between two entities.',
+        parameters: {
+          type: 'object',
+          properties: {
+            sourceId: { type: 'string', description: 'ID of the source entity' },
+            targetId: { type: 'string', description: 'ID of the target entity' },
+            relationship: { type: 'string', description: 'Type of relationship to remove' },
+          },
+          required: ['sourceId', 'targetId', 'relationship'],
+        },
+      },
+    ];
+  }
+
+  /**
+   * Execute entity management tool calls
+   */
+  private async executeEntityTool(toolCall: ToolCall): Promise<string> {
+    const { name, arguments: rawArgs } = toolCall;
+    
+    // Parse arguments if they come as a JSON string (Ollama sometimes returns string)
+    // Tool arguments are validated by the LLM tool schema, so we can safely use 'any' here
+    let args: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    if (typeof rawArgs === 'string') {
+      try {
+        args = JSON.parse(rawArgs);
+      } catch {
+        args = {};
+      }
+    } else {
+      args = rawArgs || {};
+    }
+
+    try {
+      switch (name) {
+        case 'create_entity': {
+          const existingIndex = this.entityMemory.nodes.findIndex(n => n.id === args.id);
+          if (existingIndex >= 0) {
+            // Entity already exists, update it instead
+            this.entityMemory.nodes[existingIndex] = {
+              ...this.entityMemory.nodes[existingIndex],
+              name: args.name || this.entityMemory.nodes[existingIndex].name,
+              description: args.description || this.entityMemory.nodes[existingIndex].description,
+              properties: { ...this.entityMemory.nodes[existingIndex].properties, ...(args.properties || {}) },
+            };
+            this.entityMemory.lastUpdated = new Date();
+            return `Updated existing entity: ${args.id}`;
+          }
+
+          const newNode: EntityNode = {
+            id: args.id,
+            type: args.type || 'other',
+            name: args.name,
+            description: args.description,
+            properties: args.properties || {},
+            relationships: [],
+          };
+          this.entityMemory.nodes.push(newNode);
+          this.entityMemory.lastUpdated = new Date();
+          return `Created entity: ${args.name} (${args.id})`;
+        }
+
+        case 'update_entity': {
+          const index = this.entityMemory.nodes.findIndex(n => n.id === args.id);
+          if (index < 0) {
+            return `Entity not found: ${args.id}`;
+          }
+
+          if (args.name) this.entityMemory.nodes[index].name = args.name;
+          if (args.description) this.entityMemory.nodes[index].description = args.description;
+          if (args.properties) {
+            this.entityMemory.nodes[index].properties = {
+              ...this.entityMemory.nodes[index].properties,
+              ...args.properties,
+            };
+          }
+          this.entityMemory.lastUpdated = new Date();
+          return `Updated entity: ${args.id}`;
+        }
+
+        case 'delete_entity': {
+          const index = this.entityMemory.nodes.findIndex(n => n.id === args.id);
+          if (index < 0) {
+            return `Entity not found: ${args.id}`;
+          }
+
+          // Remove relationships pointing to this entity
+          for (const node of this.entityMemory.nodes) {
+            node.relationships = node.relationships.filter(
+              rel => rel.targetId !== args.id
+            );
+          }
+
+          this.entityMemory.nodes.splice(index, 1);
+          this.entityMemory.lastUpdated = new Date();
+          return `Deleted entity: ${args.id}`;
+        }
+
+        case 'add_relationship': {
+          const sourceIndex = this.entityMemory.nodes.findIndex(n => n.id === args.sourceId);
+          const targetIndex = this.entityMemory.nodes.findIndex(n => n.id === args.targetId);
+
+          if (sourceIndex < 0) {
+            return `Source entity not found: ${args.sourceId}`;
+          }
+          if (targetIndex < 0) {
+            return `Target entity not found: ${args.targetId}`;
+          }
+
+          const existingRelIndex = this.entityMemory.nodes[sourceIndex].relationships.findIndex(
+            rel => rel.targetId === args.targetId && rel.relationship === args.relationship
+          );
+
+          const strength = typeof args.strength === 'number' ? Math.max(0, Math.min(1, args.strength)) : 0.5;
+
+          if (existingRelIndex >= 0) {
+            this.entityMemory.nodes[sourceIndex].relationships[existingRelIndex].strength = strength;
+            return `Updated relationship: ${args.sourceId} --[${args.relationship}]--> ${args.targetId}`;
+          } else {
+            this.entityMemory.nodes[sourceIndex].relationships.push({
+              targetId: args.targetId,
+              relationship: args.relationship,
+              strength,
+            });
+            this.entityMemory.lastUpdated = new Date();
+            return `Added relationship: ${args.sourceId} --[${args.relationship}]--> ${args.targetId}`;
+          }
+        }
+
+        case 'remove_relationship': {
+          const sourceIndex = this.entityMemory.nodes.findIndex(n => n.id === args.sourceId);
+          if (sourceIndex < 0) {
+            return `Source entity not found: ${args.sourceId}`;
+          }
+
+          const initialLength = this.entityMemory.nodes[sourceIndex].relationships.length;
+          this.entityMemory.nodes[sourceIndex].relationships = this.entityMemory.nodes[sourceIndex].relationships.filter(
+            rel => !(rel.targetId === args.targetId && rel.relationship === args.relationship)
+          );
+
+          if (this.entityMemory.nodes[sourceIndex].relationships.length < initialLength) {
+            this.entityMemory.lastUpdated = new Date();
+            return `Removed relationship: ${args.sourceId} --[${args.relationship}]--> ${args.targetId}`;
+          }
+          return `Relationship not found: ${args.sourceId} --[${args.relationship}]--> ${args.targetId}`;
+        }
+
+        default:
+          return `Unknown tool: ${name}`;
+      }
+    } catch (error) {
+      return `Error executing ${name}: ${(error as Error).message}`;
+    }
+  }
+
+  /**
    * Generate conversation summary (thread-specific) and update entity memory (shared)
    */
   private async updateMemory(): Promise<void> {
@@ -438,7 +654,15 @@ Output format:
     const llmMessages: Message[] = [
       {
         role: 'system',
-        content: 'You are a helpful AI assistant. Respond concisely and clearly.',
+        content: `You are a helpful AI assistant. Respond concisely and clearly.
+
+Current entity memory (shared across all threads):
+${this.entityMemory.nodes.length > 0 
+  ? JSON.stringify(this.entityMemory.nodes.map(n => ({ id: n.id, type: n.type, name: n.name })), null, 2)
+  : 'No entities yet.'
+}
+
+Use the available tools to create, update, or delete entities as you learn about them from the conversation.`,
       },
     ];
 
@@ -457,12 +681,48 @@ Output format:
     })));
 
     try {
-      const response = await this.llm.complete({
+      // Include entity tools in every request
+      const tools = this.getEntityTools();
+      
+      let response = await this.llm.complete({
         messages: llmMessages,
         temperature: 0.7,
         maxTokens: 500,
+        tools,
         },
   );
+
+      // Process tool calls if any
+      if (response.toolCalls && response.toolCalls.length > 0) {
+        const toolResults: Message[] = [];
+        
+        for (const toolCall of response.toolCalls) {
+          const result = await this.executeEntityTool(toolCall);
+          toolResults.push({
+            role: 'tool',
+            content: result,
+            toolCallId: toolCall.id,
+          });
+        }
+
+        // Save entity memory after processing tools
+        await this.saveEntityMemory();
+
+        // If there were tool calls, make a follow-up request to get the final response
+        const followUpMessages = [...llmMessages, {
+          role: 'assistant' as const,
+          content: response.content || '',
+          toolCalls: response.toolCalls,
+        }, ...toolResults];
+
+        response = await this.llm.complete({
+          messages: followUpMessages,
+          temperature: 0.7,
+          maxTokens: 500,
+          tools,
+          },
+    );
+      }
 
       this.messages.push({
         role: 'assistant',
@@ -893,7 +1153,7 @@ function ChatUI({ app }: ChatUIProps) {
         <Text dimColor>Type /chat to return...</Text>
         <Box marginTop={1}>
           <Text>&gt; </Text>
-          <EnhancedTextInput value={input} onChange={setInput} onSubmit={handleSubmit} focus={focusedPane === 'input'} />
+          <TextInput value={input} onChange={setInput} onSubmit={handleSubmit} />
         </Box>
       </Box>
     );
@@ -919,7 +1179,7 @@ function ChatUI({ app }: ChatUIProps) {
         <Text dimColor>Type /thread &lt;name&gt; to switch, /new to create, /chat to return</Text>
         <Box marginTop={1}>
           <Text>&gt; </Text>
-          <EnhancedTextInput value={input} onChange={setInput} onSubmit={handleSubmit} focus={focusedPane === 'input'} />
+          <TextInput value={input} onChange={setInput} onSubmit={handleSubmit} />
         </Box>
       </Box>
     );
@@ -973,11 +1233,11 @@ function ChatUI({ app }: ChatUIProps) {
             filteredCommands={filteredCommands}
             selectedCommandIndex={selectedCommandIndex}
           />
-        )}
+      )}
 
       <Box marginTop={1} borderStyle="single" borderColor="gray" padding={1}>
         <Text bold>&gt; </Text>
-        <EnhancedTextInput
+        <TextInput
           value={input}
           onChange={setInput}
           onSubmit={handleSubmit}
@@ -989,7 +1249,7 @@ function ChatUI({ app }: ChatUIProps) {
         <Text dimColor>
           {messages.length > 0 ? `${messages.length} messages` : 'Ready to chat'}
         </Text>
-        </Box>
+      </Box>
       </Box>
 
       {/* Right Pane: Memory - Memoized to prevent re-renders */}

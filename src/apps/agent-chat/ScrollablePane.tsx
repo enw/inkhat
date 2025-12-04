@@ -88,6 +88,8 @@ export const ScrollablePane = memo(function ScrollablePane({
       padding={1}
       flexGrow={1}
       minHeight={0}
+      height="100%"
+      overflowY="hidden"
     >
       <Box flexDirection="row" marginBottom={1}>
         <Text bold color={isFocused ? 'green' : titleColor}>
@@ -105,10 +107,10 @@ export const ScrollablePane = memo(function ScrollablePane({
         </Box>
       )}
 
-      <Box flexDirection="column" flexGrow={1} minHeight={0}>
+      <Box flexDirection="column" flexGrow={1} minHeight={0} overflowY="hidden">
         {visibleItems.length > 0 ? (
           visibleItems.map((item, i) => (
-            <Box key={visibleStart + i}>{item}</Box>
+            <Box key={visibleStart + i} flexShrink={0}>{item}</Box>
           ))
         ) : (
           <Box>
