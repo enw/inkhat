@@ -94,11 +94,22 @@ export class OllamaAdapter implements LLMPort {
         }
 
         if (chunk.message?.tool_calls) {
-          toolCalls = chunk.message.tool_calls.map((tc: any) => ({
-            id: tc.id || `tool_${Date.now()}`,
-            name: tc.function?.name || '',
-            arguments: tc.function?.arguments || {},
-          }));
+          toolCalls = chunk.message.tool_calls.map((tc: any) => {
+            // Ollama may return arguments as a JSON string or object
+            let args = tc.function?.arguments || {};
+            if (typeof args === 'string') {
+              try {
+                args = JSON.parse(args);
+              } catch {
+                args = {};
+              }
+            }
+            return {
+              id: tc.id || `tool_${Date.now()}`,
+              name: tc.function?.name || '',
+              arguments: args,
+            };
+          });
 
           yield {
             delta: '',
@@ -214,10 +225,20 @@ export class OllamaAdapter implements LLMPort {
 
     if (response.message?.tool_calls) {
       for (const tc of response.message.tool_calls) {
+        // Ollama may return arguments as a JSON string or object
+        let args = tc.function?.arguments || {};
+        if (typeof args === 'string') {
+          try {
+            args = JSON.parse(args);
+          } catch {
+            args = {};
+          }
+        }
+        
         toolCalls.push({
           id: tc.id || `tool_${Date.now()}`,
           name: tc.function?.name || '',
-          arguments: tc.function?.arguments || {},
+          arguments: args,
         });
       }
     }

@@ -31,12 +31,9 @@ export const App: React.FC<InkhatAppProps> = ({ framework, keyboardInput }) => {
 
   return (
     <KeyboardHandler input={keyboardInput}>
-      <Box flexDirection="column">
+      <Box flexDirection="column" width="100%" height="100%" flexGrow={1}>
         {currentApp ? (
-          <Box flexDirection="column">
-            <Box marginBottom={1}>
-              <Text dimColor>Press 'q' to quit, 'b' to go back</Text>
-            </Box>
+          <Box flexDirection="column" width="100%" height="100%" flexGrow={1}>
             {currentApp.render()}
           </Box>
         ) : availableApps.length > 0 ? (

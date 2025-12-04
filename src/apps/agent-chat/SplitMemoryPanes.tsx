@@ -60,7 +60,7 @@ export const SplitMemoryPanes = memo(function SplitMemoryPanes({
   focusedPane,
 }: SplitMemoryPanesProps) {
   return (
-    <Box flexDirection="column" width="40%" marginLeft={1} height="100%">
+    <Box flexDirection="column" width="40%" marginLeft={1} height="100%" flexGrow={1}>
       <Box borderStyle="round" borderColor="magenta" padding={1} marginBottom={1} flexShrink={0}>
         <Text bold color="magenta">
           Memory 🧠
@@ -136,10 +136,12 @@ export const SplitMemoryPanes = memo(function SplitMemoryPanes({
                      node.type === 'task' ? '✓' : 
                      node.type === 'concept' ? '💡' : '🔷'} {node.name}
                   </Text>
-                  <Text dimColor>
-                    {node.description.slice(0, 80)}
-                    {node.description.length > 80 ? '...' : ''}
-                  </Text>
+                  {node.description && (
+                    <Text dimColor>
+                      {node.description.slice(0, 80)}
+                      {node.description.length > 80 ? '...' : ''}
+                    </Text>
+                  )}
                   {node.relationships.length > 0 && (
                     <Text dimColor>
                       → {node.relationships.length} relationship{node.relationships.length > 1 ? 's' : ''}

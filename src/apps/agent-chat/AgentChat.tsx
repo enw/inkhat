@@ -18,6 +18,10 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  toolCalls?: Array<{
+    name: string;
+    result?: string;
+  }>;
 }
 
 /**
@@ -656,13 +660,21 @@ Output format:
         role: 'system',
         content: `You are a helpful AI assistant. Respond concisely and clearly.
 
+IMPORTANT: You have access to entity management tools. You MUST use these tools to track entities (people, places, concepts, events, tasks) mentioned in conversations.
+
 Current entity memory (shared across all threads):
 ${this.entityMemory.nodes.length > 0 
   ? JSON.stringify(this.entityMemory.nodes.map(n => ({ id: n.id, type: n.type, name: n.name })), null, 2)
   : 'No entities yet.'
 }
 
-Use the available tools to create, update, or delete entities as you learn about them from the conversation.`,
+REQUIRED BEHAVIOR:
+- When the user mentions a NEW person, place, concept, event, or task, you MUST call create_entity to add it
+- When you learn new information about an EXISTING entity, call update_entity to update it
+- When entities relate to each other, call add_relationship to connect them
+- Use these tools proactively - don't wait to be asked. Extract entities from every conversation.
+
+Always use the available tools to maintain accurate entity memory throughout the conversation.`,
       },
     ];
 
@@ -693,16 +705,30 @@ Use the available tools to create, update, or delete entities as you learn about
   );
 
       // Process tool calls if any
+      const executedTools: Array<{ name: string; result: string }> = [];
+      
       if (response.toolCalls && response.toolCalls.length > 0) {
         const toolResults: Message[] = [];
         
         for (const toolCall of response.toolCalls) {
-          const result = await this.executeEntityTool(toolCall);
-          toolResults.push({
-            role: 'tool',
-            content: result,
-            toolCallId: toolCall.id,
-          });
+          try {
+            const result = await this.executeEntityTool(toolCall);
+            executedTools.push({ name: toolCall.name, result });
+            toolResults.push({
+              role: 'tool',
+              content: result,
+              toolCallId: toolCall.id,
+            });
+          } catch (error) {
+            // Log tool execution errors but continue (silently fail)
+            // Error will be shown in tool result message
+            executedTools.push({ name: toolCall.name, result: `Error: ${(error as Error).message}` });
+            toolResults.push({
+              role: 'tool',
+              content: `Error: ${(error as Error).message}`,
+              toolCallId: toolCall.id,
+            });
+          }
         }
 
         // Save entity memory after processing tools
@@ -728,6 +754,7 @@ Use the available tools to create, update, or delete entities as you learn about
         role: 'assistant',
         content: response.content,
         timestamp: new Date(),
+        toolCalls: executedTools.length > 0 ? executedTools : undefined,
         },
   );
 
@@ -874,6 +901,18 @@ const ScrollableChatView = memo(function ScrollableChatView({ messages, isFocuse
               {msg.role === 'user' ? 'You' : 'Agent'}:
             </Text>
             <Text>{msg.content}</Text>
+            {msg.toolCalls && msg.toolCalls.length > 0 && (
+              <Box marginTop={1} flexDirection="column">
+                <Text dimColor italic>
+                  🔧 Tools used: {msg.toolCalls.map(tc => tc.name).join(', ')}
+                </Text>
+                {msg.toolCalls.map((tc, idx) => (
+                  <Text key={idx} dimColor>
+                    • {tc.name}: {tc.result}
+                  </Text>
+                ))}
+              </Box>
+            )}
           </Box>
         ))}
       </Box>
@@ -1194,7 +1233,8 @@ function ChatUI({ app }: ChatUIProps) {
   return (
     <Box flexDirection="row" width="100%" height="100%" flexGrow={1}>
       {/* Left Pane: Chat */}
-      <Box flexDirection="column" width="60%" borderStyle="single" borderColor={focusedPane === 'chat' ? 'green' : 'cyan'} padding={1} height="100%">
+      <Box flexDirection="column" width="60%" borderStyle="single" borderColor={focusedPane === 'chat' ? 'green' : 'cyan'} padding={1} height="100%" flexGrow={1}>
+        {/* Header - Fixed height */}
         <Box borderStyle="round" borderColor="cyan" padding={1} flexDirection="column" flexShrink={0}>
           <Text bold color="cyan">
             Agent Chat 🤖 {focusedPane === 'chat' ? " ▶" : ""}
@@ -1202,9 +1242,13 @@ function ChatUI({ app }: ChatUIProps) {
           <Text dimColor>
             {currentThread ? `Thread: ${currentThread.name}` : 'No thread'} • 
             Type / to see commands • Arrow keys to scroll
+          </Text>
+          <Text dimColor>
+            🔧 Entity tools enabled: Agents use tools to track entities automatically
               </Text>
             </Box>
 
+        {/* Scrollable chat area - Takes remaining space */}
         <Box 
           flexDirection="column" 
           marginTop={1} 
@@ -1215,27 +1259,31 @@ function ChatUI({ app }: ChatUIProps) {
           <ScrollableChatView messages={messages} isFocused={focusedPane === 'chat'} />
       </Box>
 
+        {/* Status indicators - Fixed height */}
       {isLoading && (
-        <Box marginTop={1}>
+          <Box marginTop={1} flexShrink={0}>
           <Text color="yellow">Agent is thinking...</Text>
         </Box>
       )}
 
         {isUpdatingMemory && (
-          <Box marginTop={1}>
+          <Box marginTop={1} flexShrink={0}>
             <Text color="yellow" dimColor>Updating memory...</Text>
           </Box>
         )}
 
-        {/* Command selector */}
+        {/* Command selector - Fixed height */}
         {showCommandSelector && filteredCommands.length > 0 && (
-          <CommandSelector 
-            filteredCommands={filteredCommands}
-            selectedCommandIndex={selectedCommandIndex}
-          />
-      )}
+          <Box flexShrink={0} marginTop={1}>
+            <CommandSelector 
+              filteredCommands={filteredCommands}
+              selectedCommandIndex={selectedCommandIndex}
+            />
+          </Box>
+        )}
 
-      <Box marginTop={1} borderStyle="single" borderColor="gray" padding={1}>
+        {/* Input field - Fixed height */}
+        <Box marginTop={1} borderStyle="single" borderColor="gray" padding={1} flexShrink={0}>
         <Text bold>&gt; </Text>
         <TextInput
           value={input}
@@ -1245,7 +1293,8 @@ function ChatUI({ app }: ChatUIProps) {
         />
       </Box>
 
-      <Box marginTop={1}>
+        {/* Status text - Fixed height */}
+        <Box marginTop={1} flexShrink={0}>
         <Text dimColor>
           {messages.length > 0 ? `${messages.length} messages` : 'Ready to chat'}
         </Text>
